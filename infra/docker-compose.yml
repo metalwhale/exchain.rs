@@ -1,0 +1,8 @@
+version: "3"
+services:
+  exchain:
+    build: ./exchain
+    volumes:
+      - ../:/usr/src/exchain.rs
+    tty: true
+    working_dir: /usr/src/exchain.rs/exchain
