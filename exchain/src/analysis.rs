@@ -4,7 +4,7 @@ use std::error::Error;
 #[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct Candle {
-    timestamp: u64,
+    timestamp: u128,
     open: f64,
     close: f64,
     high: f64,
@@ -12,37 +12,58 @@ pub struct Candle {
     volume: f64,
 }
 
-pub enum Position {
+pub trait Symbol {
+    fn symbolize(&self) -> String;
+}
+
+pub enum Status {
     Buy,
     Hold,
     Quit,
 }
 
 pub trait Fetch {
-    fn fetch(&self) -> Result<Vec<Candle>, Box<dyn Error>>;
+    fn fetch(&self, symbol: &dyn Symbol) -> Result<Vec<Candle>, Box<dyn Error>>;
 }
 
 pub trait Analyze {
-    fn analyze(&self, candles: &[Candle]) -> Option<Position>;
+    fn analyze(&self, candles: &[Candle]) -> Option<Status>;
+}
+
+pub struct BitfinexSymbol {
+    pair: String,
+}
+impl BitfinexSymbol {
+    pub fn new(pair: &str) -> Self {
+        Self {
+            pair: pair.to_string(),
+        }
+    }
+}
+impl Symbol for BitfinexSymbol {
+    fn symbolize(&self) -> String {
+        format!("t{}", self.pair)
+    }
 }
 
 pub struct BitfinexFetcher {
     time_frame: String,
-    symbol: String,
 }
 impl BitfinexFetcher {
-    pub fn new(time_frame: &str, symbols: &str) -> Self {
-        BitfinexFetcher {
+    pub fn new(time_frame: &str) -> Self {
+        Self {
             time_frame: time_frame.to_string(),
-            symbol: symbols.to_string(),
         }
     }
 }
 impl Fetch for BitfinexFetcher {
-    fn fetch(&self) -> Result<Vec<Candle>, Box<dyn Error>> {
+    fn fetch(&self, symbol: &dyn Symbol) -> Result<Vec<Candle>, Box<dyn Error>> {
+        const LIMIT: usize = 240;
         let mut response: Vec<Candle> = reqwest::blocking::get(format!(
-            "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit=240",
-            self.time_frame, self.symbol
+            "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit={}",
+            self.time_frame,
+            symbol.symbolize(),
+            LIMIT
         ))?
         .json()?;
         response.reverse();
@@ -55,11 +76,6 @@ struct MacdHistogram {
     signal: f64,
 }
 pub struct MacdAnalyzer {}
-impl MacdAnalyzer {
-    pub fn new() -> Self {
-        MacdAnalyzer {}
-    }
-}
 impl MacdAnalyzer {
     fn calculate_histograms(&self, prices: &[f64]) -> Vec<MacdHistogram> {
         const FAST_PERIOD: usize = 12;
@@ -86,7 +102,7 @@ impl MacdAnalyzer {
     }
 }
 impl Analyze for MacdAnalyzer {
-    fn analyze(&self, candles: &[Candle]) -> Option<Position> {
+    fn analyze(&self, candles: &[Candle]) -> Option<Status> {
         let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
         let mut histograms = self.calculate_histograms(&closes);
         let MacdHistogram {
@@ -100,11 +116,11 @@ impl Analyze for MacdAnalyzer {
                     signal: second_last_signal,
                 } = histograms.pop()?;
                 match second_last_macd - second_last_signal {
-                    d if d <= 0.0 => Position::Buy,
-                    _ => Position::Hold,
+                    d if d <= 0.0 => Status::Buy,
+                    _ => Status::Hold,
                 }
             }
-            _ => Position::Quit,
+            _ => Status::Quit,
         })
     }
 }

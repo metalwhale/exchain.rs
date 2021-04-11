@@ -1,38 +1,74 @@
-use crate::analysis::{Analyze, Fetch, Position};
+use crate::analysis::{Analyze, Fetch, Status, Symbol};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+pub struct Position<'p> {
+    timestamp: u128,
+    symbol: &'p dyn Symbol,
+    status: Status,
+}
 
 pub trait Execute {
     fn execute(&self, position: &Position);
 }
 
-pub struct Watcher<'w, A: Analyze> {
-    analyzer: A,
-    fetchers: Vec<Box<dyn 'w + Fetch>>,
-    executors: Vec<Box<dyn 'w + Execute>>,
+struct Actor {
+    fetcher: Box<dyn Fetch>,
+    executors: Vec<Box<dyn Execute>>,
 }
-
-impl<'w, A: Analyze> Watcher<'w, A> {
+pub struct Watcher<A: Analyze> {
+    analyzer: A,
+    symbols: Vec<Box<dyn Symbol>>,
+    actors: HashMap<String, Actor>,
+}
+impl<A: Analyze> Watcher<A> {
     pub fn new(analyzer: A) -> Self {
         Watcher {
             analyzer,
-            fetchers: vec![],
-            executors: vec![],
+            symbols: vec![],
+            actors: HashMap::new(),
         }
     }
 
-    pub fn add_fetcher<F: 'w + Fetch>(&mut self, fetcher: F) {
-        self.fetchers.push(Box::new(fetcher));
+    pub fn add_symbol<S: 'static + Symbol>(&mut self, symbol: S) {
+        self.symbols.push(Box::new(symbol));
     }
 
-    pub fn add_executor<E: 'w + Execute>(&mut self, executor: E) {
-        self.executors.push(Box::new(executor));
+    pub fn add_fetcher<F: 'static + Fetch>(&mut self, key: &str, fetcher: F) {
+        self.actors.insert(
+            key.to_string(),
+            Actor {
+                fetcher: Box::new(fetcher),
+                executors: vec![],
+            },
+        );
+    }
+
+    pub fn add_executor<E: 'static + Execute>(&mut self, key: &str, executor: E) {
+        self.actors
+            .entry(key.to_string())
+            .and_modify(|a| a.executors.push(Box::new(executor)));
     }
 
     pub fn watch(&self) {
-        for fetcher in &self.fetchers {
-            if let Ok(candles) = fetcher.fetch() {
-                if let Some(position) = self.analyzer.analyze(&candles) {
-                    for e in &self.executors {
-                        e.execute(&position);
+        for symbol in &self.symbols {
+            let symbol = &**symbol;
+            for Actor { fetcher, executors } in self.actors.values() {
+                if let Ok(candles) = fetcher.fetch(symbol) {
+                    if let Some(status) = self.analyzer.analyze(&candles) {
+                        let position = Position {
+                            timestamp: SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis(),
+                            symbol,
+                            status,
+                        };
+                        for e in executors {
+                            e.execute(&position);
+                        }
                     }
                 }
             }
