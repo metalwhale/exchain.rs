@@ -4,35 +4,36 @@ pub trait Execute {
     fn execute(&self, position: &Position);
 }
 
-pub struct Watcher<'f, 'e, A: Analyze> {
-    fetchers: Vec<Box<dyn 'f + Fetch>>,
+pub struct Watcher<'w, A: Analyze> {
     analyzer: A,
-    executors: Vec<Box<dyn 'e + Execute>>,
+    fetchers: Vec<Box<dyn 'w + Fetch>>,
+    executors: Vec<Box<dyn 'w + Execute>>,
 }
 
-impl<'f, 'e, A: Analyze> Watcher<'f, 'e, A> {
+impl<'w, A: Analyze> Watcher<'w, A> {
     pub fn new(analyzer: A) -> Self {
         Watcher {
-            fetchers: vec![],
             analyzer,
+            fetchers: vec![],
             executors: vec![],
         }
     }
 
-    pub fn add_fetcher<F: 'f + Fetch>(&mut self, fetcher: F) {
+    pub fn add_fetcher<F: 'w + Fetch>(&mut self, fetcher: F) {
         self.fetchers.push(Box::new(fetcher));
     }
 
-    pub fn add_executor<E: 'e + Execute>(&mut self, executor: E) {
+    pub fn add_executor<E: 'w + Execute>(&mut self, executor: E) {
         self.executors.push(Box::new(executor));
     }
 
     pub fn watch(&self) {
         for fetcher in &self.fetchers {
             if let Ok(candles) = fetcher.fetch() {
-                let position = self.analyzer.analyze(&candles);
-                for e in &self.executors {
-                    e.execute(&position);
+                if let Some(position) = self.analyzer.analyze(&candles) {
+                    for e in &self.executors {
+                        e.execute(&position);
+                    }
                 }
             }
         }
