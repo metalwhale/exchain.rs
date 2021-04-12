@@ -27,7 +27,7 @@ pub trait Fetch {
 }
 
 pub trait Analyze {
-    fn analyze(&self, candles: &[Candle]) -> Option<Status>;
+    fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>>;
 }
 
 pub struct BitfinexSymbol {
@@ -102,19 +102,19 @@ impl MacdAnalyzer {
     }
 }
 impl Analyze for MacdAnalyzer {
-    fn analyze(&self, candles: &[Candle]) -> Option<Status> {
+    fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>> {
         let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
         let mut histograms = self.calculate_histograms(&closes);
         let MacdHistogram {
             macd: last_macd,
             signal: last_signal,
-        } = histograms.pop()?;
-        Some(match last_macd - last_signal {
+        } = histograms.pop().ok_or("Not enough histograms.")?;
+        Ok(match last_macd - last_signal {
             d if d > 0.0 => {
                 let MacdHistogram {
                     macd: second_last_macd,
                     signal: second_last_signal,
-                } = histograms.pop()?;
+                } = histograms.pop().ok_or("Not enough histograms.")?;
                 match second_last_macd - second_last_signal {
                     d if d <= 0.0 => Status::Buy,
                     _ => Status::Hold,

@@ -1,6 +1,10 @@
 use crate::analysis::{Analyze, Fetch, Status, Symbol};
 use std::{
-    collections::HashMap,
+    collections::{
+        hash_map::Entry::{Occupied, Vacant},
+        HashMap,
+    },
+    error::Error,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,63 +20,90 @@ pub trait Execute {
 
 struct Actor {
     fetcher: Box<dyn Fetch>,
+    symbols: Vec<Box<dyn Symbol>>,
     executors: Vec<Box<dyn Execute>>,
 }
 pub struct Watcher<A: Analyze> {
     analyzer: A,
-    symbols: Vec<Box<dyn Symbol>>,
     actors: HashMap<String, Actor>,
 }
 impl<A: Analyze> Watcher<A> {
     pub fn new(analyzer: A) -> Self {
         Watcher {
             analyzer,
-            symbols: vec![],
             actors: HashMap::new(),
         }
     }
 
-    pub fn add_symbol<S: 'static + Symbol>(&mut self, symbol: S) {
-        self.symbols.push(Box::new(symbol));
-    }
-
-    pub fn add_fetcher<F: 'static + Fetch>(&mut self, key: &str, fetcher: F) {
-        self.actors.insert(
+    pub fn add_fetcher<F: 'static + Fetch>(
+        mut self,
+        key: &str,
+        fetcher: F,
+    ) -> Result<Self, String> {
+        match self.actors.insert(
             key.to_string(),
             Actor {
                 fetcher: Box::new(fetcher),
+                symbols: vec![],
                 executors: vec![],
             },
-        );
+        ) {
+            None => Ok(self),
+            Some(_) => Err(format!("`{}` key duplicated.", key)),
+        }
     }
 
-    pub fn add_executor<E: 'static + Execute>(&mut self, key: &str, executor: E) {
-        self.actors
+    pub fn add_symbol<S: 'static + Symbol>(mut self, key: &str, symbol: S) -> Result<Self, String> {
+        match self
+            .actors
             .entry(key.to_string())
-            .and_modify(|a| a.executors.push(Box::new(executor)));
+            .and_modify(|a| a.symbols.push(Box::new(symbol)))
+        {
+            Occupied(_) => Ok(self),
+            Vacant(_) => Err(format!("No `{}` key found. Use `add_fetcher` first.", key)),
+        }
     }
 
-    pub fn watch(&self) {
-        for symbol in &self.symbols {
-            let symbol = &**symbol;
-            for Actor { fetcher, executors } in self.actors.values() {
-                if let Ok(candles) = fetcher.fetch(symbol) {
-                    if let Some(status) = self.analyzer.analyze(&candles) {
-                        let position = Position {
-                            timestamp: SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis(),
-                            symbol,
-                            status,
-                        };
-                        for e in executors {
-                            e.execute(&position);
-                        }
-                    }
+    pub fn add_executor<E: 'static + Execute>(
+        mut self,
+        key: &str,
+        executor: E,
+    ) -> Result<Self, String> {
+        match self
+            .actors
+            .entry(key.to_string())
+            .and_modify(|a| a.executors.push(Box::new(executor)))
+        {
+            Occupied(_) => Ok(self),
+            Vacant(_) => Err(format!("No `{}` key found. Use `add_fetcher` first.", key)),
+        }
+    }
+
+    pub fn watch(&self) -> Result<(), Box<dyn Error>> {
+        for Actor {
+            fetcher,
+            symbols,
+            executors,
+        } in self.actors.values()
+        {
+            for symbol in symbols {
+                let symbol = &**symbol;
+                let candles = fetcher.fetch(symbol)?;
+                let status = self.analyzer.analyze(&candles)?;
+                let position = Position {
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis(),
+                    symbol,
+                    status,
+                };
+                for e in executors {
+                    e.execute(&position);
                 }
             }
         }
+        Ok(())
     }
 }
 

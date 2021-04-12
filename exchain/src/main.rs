@@ -5,9 +5,19 @@ use crate::analysis::{BitfinexFetcher, BitfinexSymbol, MacdAnalyzer};
 use crate::execution::{SlackExecutor, Watcher};
 
 fn main() {
-    let mut watcher = Watcher::new(MacdAnalyzer {});
-    watcher.add_symbol(BitfinexSymbol::new("BTCUSD"));
-    watcher.add_fetcher("bitfinex", BitfinexFetcher::new("1D"));
-    watcher.add_executor("bitfinex", SlackExecutor::new());
-    watcher.watch();
+    match make_watcher("bitfinex") {
+        Ok(watcher) => {
+            if let Err(e) = watcher.watch() {
+                println!("{}", e);
+            }
+        }
+        Err(e) => println!("{}", e),
+    }
+}
+
+fn make_watcher(key: &str) -> Result<Watcher<MacdAnalyzer>, String> {
+    Watcher::new(MacdAnalyzer {})
+        .add_fetcher(key, BitfinexFetcher::new("1D"))?
+        .add_symbol(key, BitfinexSymbol::new("BTCUSD"))?
+        .add_executor(key, SlackExecutor::new())
 }
