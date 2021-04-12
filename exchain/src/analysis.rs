@@ -12,6 +12,7 @@ pub struct Candle {
     volume: f64,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub enum Status {
     Buy,
     Hold,
