@@ -1,4 +1,4 @@
-use crate::analysis::{Analyze, Fetch, Status, Symbol};
+use crate::analysis::{Analyze, Fetch, Status};
 use std::{
     collections::{
         hash_map::Entry::{Occupied, Vacant},
@@ -8,10 +8,19 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub struct Position<'p> {
+pub struct Position {
     timestamp: u128,
-    symbol: &'p dyn Symbol,
+    pair: String,
     status: Status,
+}
+impl Position {
+    fn new(time: SystemTime, pair: &str, status: Status) -> Self {
+        Self {
+            timestamp: time.duration_since(UNIX_EPOCH).unwrap().as_millis(),
+            pair: pair.to_string(),
+            status,
+        }
+    }
 }
 
 pub trait Execute {
@@ -20,7 +29,7 @@ pub trait Execute {
 
 struct Actor {
     fetcher: Box<dyn Fetch>,
-    symbols: Vec<Box<dyn Symbol>>,
+    pairs: Vec<String>,
     executors: Vec<Box<dyn Execute>>,
 }
 pub struct Watcher<A: Analyze> {
@@ -44,7 +53,7 @@ impl<A: Analyze> Watcher<A> {
             key.to_string(),
             Actor {
                 fetcher: Box::new(fetcher),
-                symbols: vec![],
+                pairs: vec![],
                 executors: vec![],
             },
         ) {
@@ -53,11 +62,11 @@ impl<A: Analyze> Watcher<A> {
         }
     }
 
-    pub fn add_symbol<S: 'static + Symbol>(mut self, key: &str, symbol: S) -> Result<Self, String> {
+    pub fn add_pair(mut self, key: &str, pair: &str) -> Result<Self, String> {
         match self
             .actors
             .entry(key.to_string())
-            .and_modify(|a| a.symbols.push(Box::new(symbol)))
+            .and_modify(|a| a.pairs.push(pair.to_string()))
         {
             Occupied(_) => Ok(self),
             Vacant(_) => Err(format!("No `{}` key found. Use `add_fetcher` first.", key)),
@@ -82,22 +91,14 @@ impl<A: Analyze> Watcher<A> {
     pub fn watch(&self) -> Result<(), Box<dyn Error>> {
         for Actor {
             fetcher,
-            symbols,
+            pairs,
             executors,
         } in self.actors.values()
         {
-            for symbol in symbols {
-                let symbol = &**symbol;
-                let candles = fetcher.fetch(symbol)?;
+            for pair in pairs {
+                let candles = fetcher.fetch(pair)?;
                 let status = self.analyzer.analyze(&candles)?;
-                let position = Position {
-                    timestamp: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis(),
-                    symbol,
-                    status,
-                };
+                let position = Position::new(SystemTime::now(), pair, status);
                 for e in executors {
                     e.execute(&position);
                 }

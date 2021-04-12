@@ -12,10 +12,6 @@ pub struct Candle {
     volume: f64,
 }
 
-pub trait Symbol {
-    fn symbolize(&self) -> String;
-}
-
 pub enum Status {
     Buy,
     Hold,
@@ -23,27 +19,11 @@ pub enum Status {
 }
 
 pub trait Fetch {
-    fn fetch(&self, symbol: &dyn Symbol) -> Result<Vec<Candle>, Box<dyn Error>>;
+    fn fetch(&self, pair: &str) -> Result<Vec<Candle>, Box<dyn Error>>;
 }
 
 pub trait Analyze {
     fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>>;
-}
-
-pub struct BitfinexSymbol {
-    pair: String,
-}
-impl BitfinexSymbol {
-    pub fn new(pair: &str) -> Self {
-        Self {
-            pair: pair.to_string(),
-        }
-    }
-}
-impl Symbol for BitfinexSymbol {
-    fn symbolize(&self) -> String {
-        format!("t{}", self.pair)
-    }
 }
 
 pub struct BitfinexFetcher {
@@ -57,12 +37,12 @@ impl BitfinexFetcher {
     }
 }
 impl Fetch for BitfinexFetcher {
-    fn fetch(&self, symbol: &dyn Symbol) -> Result<Vec<Candle>, Box<dyn Error>> {
+    fn fetch(&self, pair: &str) -> Result<Vec<Candle>, Box<dyn Error>> {
         const LIMIT: usize = 240;
         let mut response: Vec<Candle> = reqwest::blocking::get(format!(
             "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit={}",
             self.time_frame,
-            symbol.symbolize(),
+            format!("t{}", pair),
             LIMIT
         ))?
         .json()?;
@@ -77,6 +57,10 @@ struct MacdHistogram {
 }
 pub struct MacdAnalyzer {}
 impl MacdAnalyzer {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     fn calculate_histograms(&self, prices: &[f64]) -> Vec<MacdHistogram> {
         const FAST_PERIOD: usize = 12;
         const SLOW_PERIOD: usize = 26;

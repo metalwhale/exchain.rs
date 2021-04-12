@@ -1,7 +1,7 @@
 mod analysis;
 mod execution;
 
-use crate::analysis::{BitfinexFetcher, BitfinexSymbol, MacdAnalyzer};
+use crate::analysis::{BitfinexFetcher, MacdAnalyzer};
 use crate::execution::{SlackExecutor, Watcher};
 
 fn main() {
@@ -16,8 +16,8 @@ fn main() {
 }
 
 fn make_watcher(key: &str) -> Result<Watcher<MacdAnalyzer>, String> {
-    Watcher::new(MacdAnalyzer {})
+    Watcher::new(MacdAnalyzer::new())
         .add_fetcher(key, BitfinexFetcher::new("1D"))?
-        .add_symbol(key, BitfinexSymbol::new("BTCUSD"))?
+        .add_pair(key, "BTCUSD")?
         .add_executor(key, SlackExecutor::new())
 }
