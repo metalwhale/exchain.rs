@@ -3,7 +3,7 @@ mod execution;
 
 use crate::analysis::{BitfinexFetcher, MacdAnalyzer};
 use crate::execution::{SlackExecutor, Strategy, Watcher};
-use std::rc::Rc;
+use std::{array::IntoIter, rc::Rc};
 
 fn main() {
     match make_watcher("bitfinex") {
@@ -18,7 +18,11 @@ fn main() {
 
 fn make_watcher(key: &str) -> Result<Watcher<MacdAnalyzer>, String> {
     const ONE_DAY: u128 = 86400000;
-    let strategy = Rc::new(Strategy::new(0.5, 1.0, ONE_DAY / 2, ONE_DAY * 6));
+    let strategy = Rc::new(Strategy::new(
+        ONE_DAY / 2,
+        ONE_DAY * 6,
+        IntoIter::new([("BTCUSD".to_string(), (0.5, 1.0))]).collect(),
+    ));
     Watcher::new(MacdAnalyzer::new())
         .add_fetcher(key, BitfinexFetcher::new("1D"))?
         .add_pair(key, "BTCUSD")?

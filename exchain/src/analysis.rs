@@ -88,18 +88,19 @@ impl MacdAnalyzer {
 }
 impl Analyze for MacdAnalyzer {
     fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>> {
+        const ERROR: &str = "Not enough candles.";
         let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
         let mut histograms = self.calculate_histograms(&closes);
         let MacdHistogram {
             macd: last_macd,
             signal: last_signal,
-        } = histograms.pop().ok_or("Not enough histograms.")?;
+        } = histograms.pop().ok_or(ERROR)?;
         Ok(match last_macd - last_signal {
             d if d > 0.0 => {
                 let MacdHistogram {
                     macd: second_last_macd,
                     signal: second_last_signal,
-                } = histograms.pop().ok_or("Not enough histograms.")?;
+                } = histograms.pop().ok_or(ERROR)?;
                 match second_last_macd - second_last_signal {
                     d if d <= 0.0 => Status::Buy,
                     _ => Status::Hold,

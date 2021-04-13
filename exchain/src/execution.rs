@@ -30,7 +30,7 @@ impl Position {
 }
 
 pub trait Execute {
-    fn execute(&self, position: &Position);
+    fn execute(&self, position: &Position) -> Result<(), Box<dyn Error>>;
 }
 
 struct Actor {
@@ -75,7 +75,7 @@ impl<A: Analyze> Watcher<A> {
             .and_modify(|a| a.pairs.push(pair.to_string()))
         {
             Occupied(_) => Ok(self),
-            Vacant(_) => Err(format!("No `{}` key found. Use `add_fetcher` first.", key)),
+            Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
         }
     }
 
@@ -90,7 +90,7 @@ impl<A: Analyze> Watcher<A> {
             .and_modify(|a| a.executors.push(Box::new(executor)))
         {
             Occupied(_) => Ok(self),
-            Vacant(_) => Err(format!("No `{}` key found. Use `add_fetcher` first.", key)),
+            Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
         }
     }
 
@@ -106,7 +106,7 @@ impl<A: Analyze> Watcher<A> {
                 let status = self.analyzer.analyze(&candles)?;
                 let position = Position::new(pair, status);
                 for e in executors {
-                    e.execute(&position);
+                    e.execute(&position)?;
                 }
             }
         }
@@ -127,29 +127,31 @@ impl Order {
     }
 }
 pub struct Strategy {
-    small_amount: f64,
-    big_amount: f64,
     rest: u128,
     period: u128,
+    amounts: HashMap<String, (f64, f64)>,
     orders: RefCell<HashMap<String, Order>>,
 }
 impl Strategy {
-    pub fn new(small_amount: f64, big_amount: f64, rest: u128, period: u128) -> Self {
+    pub fn new(rest: u128, period: u128, amounts: HashMap<String, (f64, f64)>) -> Self {
         Self {
-            small_amount,
-            big_amount,
             rest,
             period,
+            amounts,
             orders: RefCell::new(HashMap::new()),
         }
     }
 
-    fn execute(&self, position: &Position) -> Option<f64> {
+    fn execute(&self, position: &Position) -> Result<Option<f64>, Box<dyn Error>> {
         let Position {
             timestamp,
             pair,
             status,
         } = position;
+        let (small_amount, big_amount) = *self.amounts.get(pair).ok_or(format!(
+            "Amount for {} pair not found. Declare by using `new`.",
+            pair
+        ))?;
         match status {
             Status::Buy | Status::Quit => match self.orders.borrow_mut().entry(pair.to_string()) {
                 Occupied(mut entry) => {
@@ -159,9 +161,9 @@ impl Strategy {
                         let amount = match status {
                             Status::Buy => {
                                 if rest > self.period {
-                                    self.big_amount
+                                    big_amount
                                 } else {
-                                    self.small_amount
+                                    small_amount
                                 }
                             }
                             _ => 0.0,
@@ -171,7 +173,7 @@ impl Strategy {
                 }
                 Vacant(entry) => {
                     let amount = match status {
-                        Status::Buy => self.small_amount,
+                        Status::Buy => small_amount,
                         _ => 0.0,
                     };
                     entry.insert(Order::new(position, amount));
@@ -179,7 +181,7 @@ impl Strategy {
             },
             Status::Hold => {}
         };
-        match self.orders.borrow().get(pair) {
+        Ok(match self.orders.borrow().get(pair) {
             Some(order) => {
                 if order.position.timestamp == position.timestamp {
                     Some(order.amount)
@@ -188,7 +190,7 @@ impl Strategy {
                 }
             }
             None => None,
-        }
+        })
     }
 }
 
@@ -201,8 +203,8 @@ impl SlackExecutor {
     }
 }
 impl Execute for SlackExecutor {
-    fn execute(&self, position: &Position) {
-        if let Some(amount) = self.strategy.execute(position) {
+    fn execute(&self, position: &Position) -> Result<(), Box<dyn Error>> {
+        if let Some(amount) = self.strategy.execute(position)? {
             let status = match position.status {
                 Status::Buy => "Buy",
                 Status::Quit => "Quit",
@@ -210,5 +212,6 @@ impl Execute for SlackExecutor {
             };
             println!("{} {}", status, amount);
         }
+        Ok(())
     }
 }
