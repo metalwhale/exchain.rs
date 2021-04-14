@@ -34,22 +34,23 @@ pub trait Analyze {
 
 pub struct BitfinexFetcher {
     time_frame: String,
+    limit: usize,
 }
 impl BitfinexFetcher {
-    pub fn new(time_frame: &str) -> Self {
+    pub fn new(time_frame: &str, limit: usize) -> Self {
         Self {
             time_frame: time_frame.to_string(),
+            limit,
         }
     }
 }
 impl Fetch for BitfinexFetcher {
     fn fetch(&self, pair: &str) -> Result<Vec<Candle>, Box<dyn Error>> {
-        const LIMIT: usize = 240;
         let mut response: Vec<Candle> = reqwest::blocking::get(format!(
             "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit={}",
             self.time_frame,
             format!("t{}", pair),
-            LIMIT
+            self.limit
         ))?
         .json()?;
         response.reverse();
@@ -61,30 +62,37 @@ struct MacdHistogram {
     macd: f64,
     signal: f64,
 }
-pub struct MacdAnalyzer {}
+pub struct MacdAnalyzer {
+    fast_period: usize,
+    slow_period: usize,
+    signal_period: usize,
+}
 impl MacdAnalyzer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(fast_period: usize, slow_period: usize, signal_period: usize) -> Self {
+        Self {
+            fast_period,
+            slow_period,
+            signal_period,
+        }
     }
 
     fn calculate_histograms(&self, prices: &[f64]) -> Vec<MacdHistogram> {
-        const FAST_PERIOD: usize = 12;
-        const SLOW_PERIOD: usize = 26;
-        const SIGNAL_PERIOD: usize = 9;
-        let fast_multiplier = 2.0 / (FAST_PERIOD + 1) as f64;
-        let slow_multiplier = 2.0 / (SLOW_PERIOD + 1) as f64;
-        let signal_multiplier = 2.0 / (SIGNAL_PERIOD + 1) as f64;
-        let mut fast: f64 = prices[FAST_PERIOD - 1..=SLOW_PERIOD - 1].iter().sum();
-        let mut slow: f64 = prices[0..=SLOW_PERIOD - 1].iter().sum();
+        let fast_multiplier = 2.0 / (self.fast_period + 1) as f64;
+        let slow_multiplier = 2.0 / (self.slow_period + 1) as f64;
+        let signal_multiplier = 2.0 / (self.signal_period + 1) as f64;
+        let mut fast: f64 = prices[self.fast_period - 1..=self.slow_period - 1]
+            .iter()
+            .sum();
+        let mut slow: f64 = prices[0..=self.slow_period - 1].iter().sum();
         let mut macds = vec![];
-        for price in &prices[SLOW_PERIOD..] {
+        for price in &prices[self.slow_period..] {
             fast += (price - fast) * fast_multiplier;
             slow += (price - slow) * slow_multiplier;
             macds.push(fast - slow);
         }
-        let mut signal = macds[0..=SIGNAL_PERIOD - 1].iter().sum();
+        let mut signal = macds[0..=self.signal_period - 1].iter().sum();
         let mut macd_histograms = vec![];
-        for macd in macds.drain(SIGNAL_PERIOD..) {
+        for macd in macds.drain(self.signal_period..) {
             signal += (macd - signal) * signal_multiplier;
             macd_histograms.push(MacdHistogram { macd, signal });
         }
@@ -94,7 +102,7 @@ impl MacdAnalyzer {
 impl Analyze for MacdAnalyzer {
     fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>> {
         const ERROR: &str = "Not enough candles.";
-        let prices: Vec<f64> = candles.iter().map(|c| c.get_price()).collect();
+        let prices = candles.iter().map(|c| c.get_price()).collect::<Vec<_>>();
         let mut histograms = self.calculate_histograms(&prices);
         let MacdHistogram {
             macd: last_macd,

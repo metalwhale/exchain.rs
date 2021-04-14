@@ -52,10 +52,10 @@ impl<A: Analyze> Watcher<A> {
     }
 
     pub fn add_fetcher<F: 'static + Fetch + Send + Sync>(
-        mut self,
+        &mut self,
         key: &str,
         fetcher: F,
-    ) -> Result<Self, String> {
+    ) -> Result<(), String> {
         match self.actors.insert(
             key.to_string(),
             Actor {
@@ -64,33 +64,33 @@ impl<A: Analyze> Watcher<A> {
                 executors: vec![],
             },
         ) {
-            None => Ok(self),
+            None => Ok(()),
             Some(_) => Err(format!("`{}` key duplicated.", key)),
         }
     }
 
-    pub fn add_pair(mut self, key: &str, pair: &str) -> Result<Self, String> {
+    pub fn add_pair(&mut self, key: &str, pair: &str) -> Result<(), String> {
         match self
             .actors
             .entry(key.to_string())
             .and_modify(|a| a.pairs.push(pair.to_string()))
         {
-            Occupied(_) => Ok(self),
+            Occupied(_) => Ok(()),
             Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
         }
     }
 
     pub fn add_executor<E: 'static + Execute + Send + Sync>(
-        mut self,
+        &mut self,
         key: &str,
         executor: E,
-    ) -> Result<Self, String> {
+    ) -> Result<(), String> {
         match self
             .actors
             .entry(key.to_string())
             .and_modify(|a| a.executors.push(Box::new(executor)))
         {
-            Occupied(_) => Ok(self),
+            Occupied(_) => Ok(()),
             Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
         }
     }
@@ -143,7 +143,7 @@ impl Strategy {
         }
     }
 
-    fn execute(&self, position: &Position) -> Result<Option<f64>, Box<dyn Error>> {
+    fn execute(&self, position: &Position) -> Result<Option<f64>, String> {
         let Position {
             timestamp,
             pair,

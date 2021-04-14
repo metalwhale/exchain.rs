@@ -42,12 +42,12 @@ fn make_scheduler() -> Result<Scheduler, Box<dyn Error>> {
             .map(|(p, s, b)| (p.to_string(), (*s, *b)))
             .collect(),
     ));
-    let mut watcher =
-        Watcher::new(MacdAnalyzer::new()).add_fetcher(KEY, BitfinexFetcher::new(&time_frame))?;
+    let mut watcher = Watcher::new(MacdAnalyzer::new(12, 26, 9));
+    watcher.add_fetcher(KEY, BitfinexFetcher::new(&time_frame, 240))?;
     for (pair, _, _) in &pairs {
-        watcher = watcher.add_pair(KEY, pair)?;
+        watcher.add_pair(KEY, pair)?;
     }
-    watcher = watcher.add_executor(KEY, SlackExecutor::new(strategy, &slack_webhook_url))?;
+    watcher.add_executor(KEY, SlackExecutor::new(strategy, &slack_webhook_url))?;
     let mut scheduler = Scheduler::new();
     scheduler.every(interval.minutes()).run(move || {
         if let Err(error) = watcher.watch() {
