@@ -102,7 +102,8 @@ impl MacdAnalyzer {
 impl Analyze for MacdAnalyzer {
     fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>> {
         const ERROR: &str = "Not enough candles.";
-        let prices = candles.iter().map(|c| c.get_price()).collect::<Vec<_>>();
+        let mut prices = candles.iter().map(|c| c.get_price()).collect::<Vec<_>>();
+        prices.push(*prices.last().ok_or(ERROR)?); // Look 1 candle ahead
         let mut histograms = self.calculate_histograms(&prices);
         let MacdHistogram {
             macd: last_macd,
