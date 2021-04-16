@@ -41,58 +41,27 @@ struct Actor {
 }
 pub struct Watcher<A: Analyze> {
     analyzer: A,
-    actors: HashMap<String, Actor>,
+    actors: Vec<Actor>,
 }
 impl<A: Analyze> Watcher<A> {
     pub fn new(analyzer: A) -> Self {
         Watcher {
             analyzer,
-            actors: HashMap::new(),
+            actors: vec![],
         }
     }
 
-    pub fn add_fetcher<F: 'static + Fetch + Send + Sync>(
+    pub fn add(
         &mut self,
-        key: &str,
-        fetcher: F,
-    ) -> Result<(), String> {
-        match self.actors.insert(
-            key.to_string(),
-            Actor {
-                fetcher: Box::new(fetcher),
-                pairs: vec![],
-                executors: vec![],
-            },
-        ) {
-            None => Ok(()),
-            Some(_) => Err(format!("`{}` key duplicated.", key)),
-        }
-    }
-
-    pub fn add_pair(&mut self, key: &str, pair: &str) -> Result<(), String> {
-        match self
-            .actors
-            .entry(key.to_string())
-            .and_modify(|a| a.pairs.push(pair.to_string()))
-        {
-            Occupied(_) => Ok(()),
-            Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
-        }
-    }
-
-    pub fn add_executor<E: 'static + Execute + Send + Sync>(
-        &mut self,
-        key: &str,
-        executor: E,
-    ) -> Result<(), String> {
-        match self
-            .actors
-            .entry(key.to_string())
-            .and_modify(|a| a.executors.push(Box::new(executor)))
-        {
-            Occupied(_) => Ok(()),
-            Vacant(_) => Err(format!("`{}` key not found. Use `add_fetcher` first.", key)),
-        }
+        fetcher: Box<dyn Fetch + Send + Sync>,
+        pairs: Vec<String>,
+        executors: Vec<Box<dyn Execute + Send + Sync>>,
+    ) {
+        self.actors.push(Actor {
+            fetcher,
+            pairs,
+            executors,
+        });
     }
 
     pub fn watch(&self) -> Result<(), Box<dyn Error>> {
@@ -100,7 +69,7 @@ impl<A: Analyze> Watcher<A> {
             fetcher,
             pairs,
             executors,
-        } in self.actors.values()
+        } in &self.actors
         {
             for pair in pairs {
                 let candles = fetcher.fetch(pair)?;
@@ -215,7 +184,7 @@ impl Execute for SlackExecutor {
             let Position { pair, status, .. } = position;
             let status = match status {
                 Status::Buy => "Buy",
-                Status::Quit => "Hold",
+                Status::Quit => "Quit",
                 _ => "",
             };
             let data = json!({

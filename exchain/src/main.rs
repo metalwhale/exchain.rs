@@ -25,7 +25,6 @@ fn read_config() -> Result<Config, Box<dyn Error>> {
 }
 
 fn make_scheduler() -> Result<Scheduler, Box<dyn Error>> {
-    const KEY: &str = "bitfinex";
     let Config {
         interval,
         rest,
@@ -43,11 +42,11 @@ fn make_scheduler() -> Result<Scheduler, Box<dyn Error>> {
             .collect(),
     ));
     let mut watcher = Watcher::new(MacdAnalyzer::new(12, 26, 9));
-    watcher.add_fetcher(KEY, BitfinexFetcher::new(&time_frame, 240))?;
-    for (pair, _, _) in &pairs {
-        watcher.add_pair(KEY, pair)?;
-    }
-    watcher.add_executor(KEY, SlackExecutor::new(strategy, &slack_webhook_url))?;
+    watcher.add(
+        Box::new(BitfinexFetcher::new(&time_frame, 240)),
+        pairs.into_iter().map(|(p, _, _)| p).collect::<Vec<_>>(),
+        vec![Box::new(SlackExecutor::new(strategy, &slack_webhook_url))],
+    );
     let mut scheduler = Scheduler::new();
     scheduler.every(interval.minutes()).run(move || {
         if let Err(error) = watcher.watch() {
