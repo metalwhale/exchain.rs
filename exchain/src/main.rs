@@ -3,28 +3,68 @@ mod execution;
 
 use crate::analysis::{BitfinexFetcher, MacdAnalyzer};
 use crate::execution::{SlackExecutor, Strategy, Watcher};
-use std::{array::IntoIter, rc::Rc};
+use clokwerk::{Scheduler, TimeUnits};
+use serde::Deserialize;
+use std::{env, error::Error, fs, sync::Arc, thread, time::Duration};
 
-fn main() {
-    match make_watcher("bitfinex") {
-        Ok(watcher) => {
-            if let Err(e) = watcher.watch() {
-                println!("{}", e);
-            }
-        }
-        Err(e) => println!("{}", e),
-    }
+#[derive(Deserialize)]
+struct Config {
+    interval: u32,
+    rest: u64,
+    period: u64,
+    pairs: Vec<(String, f64, f64)>,
+    time_frame: String,
+    slack_webhook_url: String,
 }
 
-fn make_watcher(key: &str) -> Result<Watcher<MacdAnalyzer>, String> {
-    const ONE_DAY: u128 = 86400000;
-    let strategy = Rc::new(Strategy::new(
-        ONE_DAY / 2,
-        ONE_DAY * 6,
-        IntoIter::new([("BTCUSD".to_string(), (0.5, 1.0))]).collect(),
+fn read_config() -> Result<Config, Box<dyn Error>> {
+    let args = env::args().collect::<Vec<_>>();
+    let config_path = args.get(1).ok_or("No arguments passed.")?;
+    let config_content = fs::read_to_string(config_path)?;
+    Ok(toml::from_str(&config_content)?)
+}
+
+fn make_scheduler() -> Result<Scheduler, Box<dyn Error>> {
+    const KEY: &str = "bitfinex";
+    let Config {
+        interval,
+        rest,
+        period,
+        pairs,
+        time_frame,
+        slack_webhook_url,
+    } = read_config()?;
+    let strategy = Arc::new(Strategy::new(
+        rest.into(),
+        period.into(),
+        pairs
+            .iter()
+            .map(|(p, s, b)| (p.to_string(), (*s, *b)))
+            .collect(),
     ));
-    Watcher::new(MacdAnalyzer::new())
-        .add_fetcher(key, BitfinexFetcher::new("1D"))?
-        .add_pair(key, "BTCUSD")?
-        .add_executor(key, SlackExecutor::new(strategy))
+    let mut watcher =
+        Watcher::new(MacdAnalyzer::new()).add_fetcher(KEY, BitfinexFetcher::new(&time_frame))?;
+    for (pair, _, _) in &pairs {
+        watcher = watcher.add_pair(KEY, pair)?;
+    }
+    watcher = watcher.add_executor(KEY, SlackExecutor::new(strategy, &slack_webhook_url))?;
+    let mut scheduler = Scheduler::new();
+    scheduler.every(interval.minutes()).run(move || {
+        if let Err(error) = watcher.watch() {
+            println!("{}", error);
+        }
+    });
+    Ok(scheduler)
+}
+
+fn main() {
+    match make_scheduler() {
+        Ok(mut scheduler) => loop {
+            scheduler.run_pending();
+            thread::sleep(Duration::from_millis(100));
+        },
+        Err(error) => {
+            println!("{}", error);
+        }
+    }
 }

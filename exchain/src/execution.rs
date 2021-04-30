@@ -1,12 +1,13 @@
-use crate::analysis::{Analyze, Fetch, Status};
+use crate::analysis::{Analyze, Candle, Fetch, Status};
+use reqwest::blocking::Client;
+use serde_json::json;
 use std::{
-    cell::RefCell,
     collections::{
         hash_map::Entry::{Occupied, Vacant},
         HashMap,
     },
     error::Error,
-    rc::Rc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -30,13 +31,13 @@ impl Position {
 }
 
 pub trait Execute {
-    fn execute(&self, position: &Position) -> Result<(), Box<dyn Error>>;
+    fn execute(&self, candles: &[Candle], position: &Position) -> Result<(), Box<dyn Error>>;
 }
 
 struct Actor {
-    fetcher: Box<dyn Fetch>,
+    fetcher: Box<dyn Fetch + Send + Sync>,
     pairs: Vec<String>,
-    executors: Vec<Box<dyn Execute>>,
+    executors: Vec<Box<dyn Execute + Send + Sync>>,
 }
 pub struct Watcher<A: Analyze> {
     analyzer: A,
@@ -50,7 +51,7 @@ impl<A: Analyze> Watcher<A> {
         }
     }
 
-    pub fn add_fetcher<F: 'static + Fetch>(
+    pub fn add_fetcher<F: 'static + Fetch + Send + Sync>(
         mut self,
         key: &str,
         fetcher: F,
@@ -79,7 +80,7 @@ impl<A: Analyze> Watcher<A> {
         }
     }
 
-    pub fn add_executor<E: 'static + Execute>(
+    pub fn add_executor<E: 'static + Execute + Send + Sync>(
         mut self,
         key: &str,
         executor: E,
@@ -106,7 +107,7 @@ impl<A: Analyze> Watcher<A> {
                 let status = self.analyzer.analyze(&candles)?;
                 let position = Position::new(pair, status);
                 for e in executors {
-                    e.execute(&position)?;
+                    e.execute(&candles, &position)?;
                 }
             }
         }
@@ -130,7 +131,7 @@ pub struct Strategy {
     rest: u128,
     period: u128,
     amounts: HashMap<String, (f64, f64)>,
-    orders: RefCell<HashMap<String, Order>>,
+    orders: Mutex<HashMap<String, Order>>,
 }
 impl Strategy {
     pub fn new(rest: u128, period: u128, amounts: HashMap<String, (f64, f64)>) -> Self {
@@ -138,7 +139,7 @@ impl Strategy {
             rest,
             period,
             amounts,
-            orders: RefCell::new(HashMap::new()),
+            orders: Mutex::new(HashMap::new()),
         }
     }
 
@@ -153,7 +154,8 @@ impl Strategy {
             pair
         ))?;
         match status {
-            Status::Buy | Status::Quit => match self.orders.borrow_mut().entry(pair.to_string()) {
+            Status::Buy | Status::Quit => match self.orders.lock().unwrap().entry(pair.to_string())
+            {
                 Occupied(mut entry) => {
                     let last_position = &entry.get().position;
                     let rest = timestamp - last_position.timestamp;
@@ -181,7 +183,7 @@ impl Strategy {
             },
             Status::Hold => {}
         };
-        Ok(match self.orders.borrow().get(pair) {
+        Ok(match self.orders.lock().unwrap().get(pair) {
             Some(order) => {
                 if order.position.timestamp == position.timestamp {
                     Some(order.amount)
@@ -195,22 +197,38 @@ impl Strategy {
 }
 
 pub struct SlackExecutor {
-    strategy: Rc<Strategy>,
+    strategy: Arc<Strategy>,
+    webhook_url: String,
 }
 impl SlackExecutor {
-    pub fn new(strategy: Rc<Strategy>) -> Self {
-        SlackExecutor { strategy }
+    pub fn new(strategy: Arc<Strategy>, webhook_url: &str) -> Self {
+        SlackExecutor {
+            strategy,
+            webhook_url: webhook_url.to_string(),
+        }
     }
 }
 impl Execute for SlackExecutor {
-    fn execute(&self, position: &Position) -> Result<(), Box<dyn Error>> {
-        if let Some(amount) = self.strategy.execute(position)? {
-            let status = match position.status {
+    fn execute(&self, candles: &[Candle], position: &Position) -> Result<(), Box<dyn Error>> {
+        if let (Some(candle), Some(_amount)) = (candles.last(), self.strategy.execute(position)?) {
+            let price = candle.get_price();
+            let Position { pair, status, .. } = position;
+            let status = match status {
                 Status::Buy => "Buy",
-                Status::Quit => "Quit",
+                Status::Quit => "Hold",
                 _ => "",
             };
-            println!("{} {}", status, amount);
+            let data = json!({
+                "text": "",
+                "type": "mrkdwn",
+                "attachments": [{
+                    "mrkdwn_in": ["text"],
+                    "color": if status == "Buy" { "good" } else { "" },
+                    "text": format!("*{}* _{}_ at {}", status, pair, price),
+                    "fallback": format!("{} {}", status, pair),
+                }]
+            });
+            Client::new().post(&self.webhook_url).json(&data).send()?;
         }
         Ok(())
     }

@@ -11,6 +11,11 @@ pub struct Candle {
     low: f64,
     volume: f64,
 }
+impl Candle {
+    pub fn get_price(&self) -> f64 {
+        self.close
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Status {
@@ -89,8 +94,8 @@ impl MacdAnalyzer {
 impl Analyze for MacdAnalyzer {
     fn analyze(&self, candles: &[Candle]) -> Result<Status, Box<dyn Error>> {
         const ERROR: &str = "Not enough candles.";
-        let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
-        let mut histograms = self.calculate_histograms(&closes);
+        let prices: Vec<f64> = candles.iter().map(|c| c.get_price()).collect();
+        let mut histograms = self.calculate_histograms(&prices);
         let MacdHistogram {
             macd: last_macd,
             signal: last_signal,
