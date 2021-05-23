@@ -20,7 +20,6 @@ impl Candle {
 #[derive(Clone, PartialEq, Eq)]
 pub enum Status {
     Buy,
-    Hold,
     Quit,
 }
 
@@ -110,16 +109,7 @@ impl Analyze for MacdAnalyzer {
             signal: last_signal,
         } = histograms.pop().ok_or(ERROR)?;
         Ok(match last_macd - last_signal {
-            d if d > 0.0 => {
-                let MacdHistogram {
-                    macd: second_last_macd,
-                    signal: second_last_signal,
-                } = histograms.pop().ok_or(ERROR)?;
-                match second_last_macd - second_last_signal {
-                    d if d <= 0.0 => Status::Buy,
-                    _ => Status::Hold,
-                }
-            }
+            d if d > 0.0 => Status::Buy,
             _ => Status::Quit,
         })
     }

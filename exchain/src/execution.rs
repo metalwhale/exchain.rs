@@ -84,23 +84,11 @@ impl<A: Analyze> Watcher<A> {
     }
 }
 
-struct Order {
-    position: Position,
-    amount: f64,
-}
-impl Order {
-    fn new(position: &Position, amount: f64) -> Self {
-        Self {
-            position: position.clone(),
-            amount,
-        }
-    }
-}
 pub struct Strategy {
     rest: u128,
     period: u128,
     amounts: HashMap<String, (f64, f64)>,
-    orders: Mutex<HashMap<String, Order>>,
+    positions: Mutex<HashMap<String, Position>>,
 }
 impl Strategy {
     pub fn new(rest: u128, period: u128, amounts: HashMap<String, (f64, f64)>) -> Self {
@@ -108,7 +96,7 @@ impl Strategy {
             rest,
             period,
             amounts,
-            orders: Mutex::new(HashMap::new()),
+            positions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -122,46 +110,30 @@ impl Strategy {
             "Amount for {} pair not found. Declare by using `new`.",
             pair
         ))?;
-        match status {
-            Status::Buy | Status::Quit => match self.orders.lock().unwrap().entry(pair.to_string())
-            {
-                Occupied(mut entry) => {
-                    let last_position = &entry.get().position;
-                    let rest = timestamp - last_position.timestamp;
-                    if last_position.status != *status && rest >= self.rest {
-                        let amount = match status {
-                            Status::Buy => {
-                                if rest > self.period {
-                                    big_amount
-                                } else {
-                                    small_amount
-                                }
-                            }
-                            _ => 0.0,
-                        };
-                        entry.insert(Order::new(position, amount));
-                    }
-                }
-                Vacant(entry) => {
+        match self.positions.lock().unwrap().entry(pair.to_string()) {
+            Occupied(mut entry) => {
+                let last_position = entry.get();
+                let rest = timestamp - last_position.timestamp;
+                if last_position.status != *status && rest >= self.rest {
                     let amount = match status {
-                        Status::Buy => small_amount,
+                        Status::Buy => {
+                            if rest > self.period {
+                                big_amount
+                            } else {
+                                small_amount
+                            }
+                        }
                         _ => 0.0,
                     };
-                    entry.insert(Order::new(position, amount));
-                }
-            },
-            Status::Hold => {}
-        };
-        Ok(match self.orders.lock().unwrap().get(pair) {
-            Some(order) => {
-                if order.position.timestamp == position.timestamp {
-                    Some(order.amount)
-                } else {
-                    None
+                    entry.insert(position.clone());
+                    return Ok(Some(amount));
                 }
             }
-            None => None,
-        })
+            Vacant(entry) => {
+                entry.insert(position.clone());
+            }
+        };
+        Ok(None)
     }
 }
 
@@ -185,7 +157,6 @@ impl Execute for SlackExecutor {
             let status = match status {
                 Status::Buy => "Buy",
                 Status::Quit => "Quit",
-                _ => "",
             };
             let data = json!({
                 "text": "",

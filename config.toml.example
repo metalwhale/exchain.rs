@@ -1,4 +1,4 @@
-interval = 60 # Scheduler interval in minutes
+interval = 5 # Scheduler interval in minutes
 rest = 43200000 # Strategy rest time in milliseconds
 period = 518400000 # Strategy period length in milliseconds
 pairs = [["BTCUSD", 0.0, 0.0]] # [pair, small_amount, big_amount]
